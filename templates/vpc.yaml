@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Create a VPC with Public and Private Subnets, Internet Gateway, Route Table, Security Groups, Web Server, and RDS DB Subnet Group"
+
+Resources:
+  # Create VPC
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: My VPC
+
+  # Create Public Subnet
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      Tags:
+        - Key: Name
+          Value: Public 1
+
+  # Create Private Subnet 1 (For RDS)
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      Tags:
+        - Key: Name
+          Value: Private 1
+
+  # Create Private Subnet 2 (For RDS - Multi-AZ)
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      Tags:
+        - Key: Name
+          Value: Private 2
+
+  # Create Database Subnet Group for RDS
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "My Subnet Group for RDS"
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: My Subnet Group
+
+  # Create Internet Gateway
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My IG
+
+  # Attach Internet Gateway to VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  # Create Route Table for Public Subnet
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: Public Route Table
+
+  # Create Route to Direct Internet Traffic (0.0.0.0/0) to Internet Gateway
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyInternetGateway
+
+  # Associate the Public Subnet with the Public Route Table
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  # Create Security Group for Web Server
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "My Web Server Security Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Web Server Security Group
+
+  # Create Security Group for Database
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "My Database Security Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup  # Only allow MySQL access from the Web Server
+      Tags:
+        - Key: Name
+          Value: Database Security Group
+  
+    # Create RDS Database Instance
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: myDB
+      DBName: myDB
+      Engine: mysql
+      EngineVersion: "5.7"
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp2
+      StorageEncrypted: false
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      MasterUsername: admin
+      MasterUserPassword: lab-password
+      BackupRetentionPeriod: 0  # Disables automated backups
+      AutoMinorVersionUpgrade: false
+      DeletionProtection: false
+
+
+  # Create EC2 Instance (Web Server)
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0e5ab72a6bf9765cd  # Amazon Linux 2 AMI (Replace if needed)
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: Web Server
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          yum -y update
+          yum -y install httpd php mysql php-mysql
+          chkconfig httpd on
+          service httpd start
+          cd /var/www/html
+          echo "<?php
+          \$dbhost = '${MyRDSInstance.Endpoint.Address}';
+          \$dbname = 'myDB';
+          \$dbuser = 'admin';
+          \$dbpass = 'lab-password';
+
+          \$conn = new mysqli(\$dbhost, \$dbuser, \$dbpass, \$dbname);
+          if (\$conn->connect_error) {
+              die('Connection failed: ' . \$conn->connect_error);
+          }
+          echo 'Connected successfully to MySQL!';
+          ?>" > dbtest.php
+
+
+Outputs:
+  VpcId:
+    Description: "The ID of the created VPC"
+    Value: !Ref MyVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  PublicSubnet1Id:
+    Description: "The ID of the created Public Subnet"
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet1Id"
+
+  PrivateSubnet1Id:
+    Description: "The ID of the created Private Subnet 1"
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1Id"
+
+  PrivateSubnet2Id:
+    Description: "The ID of the created Private Subnet 2"
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2Id"
+
+  DBSubnetGroup:
+    Description: "The ID of the Database Subnet Group"
+    Value: !Ref MyDBSubnetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSubnetGroup"
+
+  InternetGatewayId:
+    Description: "The ID of the Internet Gateway"
+    Value: !Ref MyInternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-InternetGatewayId"
+
+  PublicRouteTableId:
+    Description: "The ID of the Public Route Table"
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicRouteTableId"
+
+  WebServerSecurityGroupId:
+    Description: "The ID of the Web Server Security Group"
+    Value: !Ref WebServerSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-WebServerSecurityGroupId"
+
+  DatabaseSecurityGroupId:
+    Description: "The ID of the Database Security Group"
+    Value: !Ref DatabaseSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-DatabaseSecurityGroupId"
+
+  WebServerPublicIP:
+    Description: "Public IP of the Web Server"
+    Value: !GetAtt WebServerInstance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-WebServerPublicIP"
+  
+  RDSInstanceEndpoint:
+    Description: "The endpoint of the RDS database"
+    Value: !GetAtt MyRDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSInstanceEndpoint"
+
