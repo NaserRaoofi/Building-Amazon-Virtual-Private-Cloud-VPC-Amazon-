@@ -102,7 +102,8 @@ This project is licensed under the **MIT License**.
 
 ## Author
 **Your Name**  
-[GitHub](https://github.com/your-username) | [LinkedIn](https://linkedin.com/in/your-profile)
+[GitHub](https://github.com/NaserRaoofi) | [LinkedIn](https://www.linkedin.com/in/naser-raoofi/)
+
 
 ---
 
