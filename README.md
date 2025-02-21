@@ -67,14 +67,23 @@ Before deploying this infrastructure, ensure you have:
 
 ## Project Structure
 ```
-/
-├── templates/
-│   ├── vpc-template.yaml  # CloudFormation template for VPC setup
-│   ├── ec2-userdata.sh     # EC2 initialization script
+/ Building-Amazon-Virtual-Private-Cloud-VPC-Amazon
+├── parameters/
+│   ├── ec2-params.json
+│   ├── rds-params.json
+│   ├── vpc-params.json
 ├── scripts/
 │   ├── deploy.sh          # Script to deploy CloudFormation stack
 │   ├── cleanup.sh         # Script to delete CloudFormation stack
-├── README.md              # Project documentation
+├── templates/
+│   ├── ec2.yaml           # EC2 configuration
+│   ├── outputs.yaml       # CloudFormation outputs
+│   ├── rds.yaml           # RDS configuration
+│   ├── security-groups.yaml # Security groups setup
+│   ├── vpc.yaml           # VPC setup
+│   ├── main-stack.yaml    # Main CloudFormation stack
+├── .gitignore             # Ignore sensitive and unnecessary files
+├── README.md              # Project documentation            # Project documentation
 ```
 
 ---
